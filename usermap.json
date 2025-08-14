@@ -1,4 +1,4 @@
 {
-  "111111111111111111": "midori_5e_id",
-  "222222222222222222": "another_5e_id"
+  "@discord_ID": "midori_5e_id",
+  "@discord_ID2": "another_5e_id"
 }
