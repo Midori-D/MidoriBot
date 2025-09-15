@@ -16,7 +16,7 @@ const STEAM_HOST2 = (process.env.STEAM_HOST2?? '').trim(); // DNS
 const STEAM_PORT = (process.env.STEAM_PORT?? '').trim(); // 27015
 const STEAM_PASSWORD = (process.env.STEAM_PASSWORD?? '').trim();
 const consoleCmd = `password ${STEAM_PASSWORD}; connect ${STEAM_HOST2}`;
-const steamLink  = `steam://connect/${STEAM_HOST2}/${STEAM_PASSWORD}`;
+const steamLink  = `steam://connect/${STEAM_HOST}/${STEAM_PASSWORD}`;
 const LANDING_RAW = (process.env.LANDING_URL?? '').trim();
 
 // 오윈 크롤러
@@ -359,3 +359,4 @@ process.on('SIGINT',  () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 client.login(process.env.DISCORD_TOKEN);
+
