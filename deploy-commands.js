@@ -15,7 +15,7 @@ console.log(`deploy scope = ${scope}, client=${clientId}, guild=${guildId || '(n
 const commands = [
   new SlashCommandBuilder().setName('핑').setDescription('핑 확인').setDMPermission(false),
   new SlashCommandBuilder().setName('서버').setDescription('서버 정보 확인').setDMPermission(false),
-  new SlashCommandBuilder().setName('유저').setDescription('내 정보 확인').setDMPermission(false),
+  new SlashCommandBuilder().setName('내정보').setDescription('내 정보 확인').setDMPermission(false),
   new SlashCommandBuilder()
     .setName('오윈').setDescription('5E 랭크 확인').setDMPermission(false)
     .addUserOption(o => o.setName('유저').setDescription('대상 유저').setRequired(true)),
