@@ -8,15 +8,18 @@ const os = require('os');
 const path = require('path');
 
 const token = (process.env.DISCORD_TOKEN?? '').trim();
-if (!token) console.warn('⚠️ DISCORD_TOKEN 미설정 (.env 확인)'); //DISCORD_TOKEN
+if (!token) console.warn('⚠️ DISCORD_TOKEN 미설정 (.env 확인)');
 
 // 미도리 서버 안내
 const STEAM_HOST = (process.env.STEAM_HOST?? '').trim(); // x.x.x.x 
 const STEAM_HOST2 = (process.env.STEAM_HOST2?? '').trim(); // DNS
-const STEAM_PORT = (process.env.STEAM_PORT?? '').trim(); // 27015
 const STEAM_PASSWORD = (process.env.STEAM_PASSWORD?? '').trim();
-const consoleCmd = `password ${STEAM_PASSWORD}; connect ${STEAM_HOST2}`;
-const steamLink  = `steam://connect/${STEAM_HOST}/${STEAM_PASSWORD}`;
+const CSTV_PASSWORD = (process.env.CSTV_PASSWORD?? '').trim();
+const consolecmd = `connect ${STEAM_HOST2}:27015; password ${STEAM_PASSWORD}`;
+const cstvcmd = `connect ${STEAM_HOST2}:27020; password ${CSTV_PASSWORD}`;
+const steamlink  = `steam://connect/${STEAM_HOST}/${STEAM_PASSWORD}`;
+const connect_page = 'https://midori.wiki/counterstrike2/connect';
+const THUMBNAIL_URL = 'https://midori.wiki/wp-content/uploads/2025/03/midori512x512.png';
 const LANDING_RAW = (process.env.LANDING_URL?? '').trim();
 
 // 오윈 크롤러
@@ -24,7 +27,7 @@ const DOTNET = (process.env.DOTNET_EXE || 'dotnet').trim();
 const DEBUG_RANK = /^(1|true)$/i.test(process.env.DEBUG_RANK || '');
 const FETCHRANK_EXE = (process.env.FETCHRANK_EXE || '').trim();
 const FETCHRANK_DIR = (process.env.FETCHRANK_DIR || '').trim();
-const HTML_CAP = 2_000_000; // 2MB
+const HTML_CAP = 2_000_000;
 const RANK_TIMEOUT_MS = parseInt(process.env.RANK_TIMEOUT_MS || '60000', 10);
 const RANK_HTTP_MS = 5000;
 const RANK_DOTNET_MS = 25000;
@@ -36,7 +39,7 @@ try {
   userMap = JSON.parse(fs.readFileSync(mapPath, 'utf8'));
   console.log('✅ usermap.json 인식 완료');
 } catch {
-  console.warn('⚠️ usermap.json 인식 불가, 빈 매핑으로 시작합니다.');
+  console.warn('⚠️ usermap.json 인식 불가, 빈 매핑으로 시작');
 }
 
 // 디버그
@@ -55,7 +58,7 @@ const client = new Client({
 client.once(Events.ClientReady, readyClient => {
     console.log(`✅ 미도리봇 v${version}, 온라인: ${readyClient.user.tag}`);
     readyClient.user.setPresence({
-        activities: [{ name: '블라스트 프리미어', type: ActivityType.Watching }],
+        activities: [{ name: 'ESL 프로리그 S22', type: ActivityType.Watching }],
         status: 'online'
     });
 });
@@ -194,7 +197,6 @@ async function getRankWithDebug(playerId) {
   return second.ok ? second : { source: `${first.source}+http`, ok: false, data: null, error: first.error || second.error };
 }
 
-
 // 미도리 서버 안내
 client.on(Events.MessageCreate, async (message) => {
   if (message.author.bot) return;
@@ -208,25 +210,40 @@ client.on(Events.MessageCreate, async (message) => {
     .addFields(
       {
         name: '① 웹으로 접속',
-        value: '[https://midori.wiki] 접속 → **코바토(사진)** 클릭',
+        value: `[🎮 SteamLink로 바로 접속](${connect_page}) 클릭`,
         inline: false
       },
       {
         name: '② CS2 콘솔 입력',
-        value: '```' + consoleCmd + '```',
+        value: '```cs\n' + consolecmd + '\n```',
         inline: false
       },
       {
         name: '③ WIN + R 후 다음을 입력',
-        value: '```' + steamLink + '```',
+        value: '```' + steamlink + '```',
         inline: false
-      }
+      },
+      {
+        name: '+ 관전자는 콘솔로 접속 (CSTV)',
+        value: '```cs\n' + cstvcmd + '\n```',
+        inline: false,
+      },
     )
-    .setTimestamp();
+      .setFooter({ text: '문제 발생 시 관리자에게 문의하세요!' })
+      .setTimestamp();
+
+  if (THUMBNAIL_URL) embed.setThumbnail(THUMBNAIL_URL);
+  if (typeof THUMBNAIL_URL !== 'undefined' && THUMBNAIL_URL) {
+  embed.setThumbnail(THUMBNAIL_URL);
+  } // 썸네일 가드
 
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
-      .setLabel('midori.wiki 열기')
+      .setLabel('🎮 SteamLink로 바로 접속')
+      .setStyle(ButtonStyle.Link)
+      .setURL('https://midori.wiki/counterstrike2/connect'),
+    new ButtonBuilder()
+      .setLabel('🌐 midori.wiki 열기')
       .setStyle(ButtonStyle.Link)
       .setURL('https://midori.wiki')
   );
@@ -324,7 +341,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
   const lbText = formatLeaderboard(leaderboard);
   
   const embed = new EmbedBuilder()
-        .setColor(0xFF88BB)
+        .setColor('#00FF00')
         .setAuthor({ name: `${u.username}님의 5E 정보`, iconURL: u.displayAvatarURL() })
         .setURL(profileUrl)
         .addFields(
@@ -359,4 +376,3 @@ process.on('SIGINT',  () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 client.login(process.env.DISCORD_TOKEN);
-
