@@ -1,6 +1,5 @@
 require('dotenv').config();
-const {ActionRowBuilder, ActivityType, AttachmentBuilder, ButtonBuilder, ButtonStyle, Client, EmbedBuilder, Events, GatewayIntentBits, MessageFlags} = require('discord.js');
-
+const {ActionRowBuilder, ActivityType, AttachmentBuilder, ButtonBuilder, ButtonStyle, ChannelType, Client, EmbedBuilder, Events, GatewayIntentBits, MessageFlags, PermissionFlagsBits} = require('discord.js');
 const { execFile } = require('child_process');
 const { version } = require('./package.json');
 const fs = require('fs');
@@ -10,7 +9,18 @@ const path = require('path');
 const token = (process.env.DISCORD_TOKEN?? '').trim();
 if (!token) console.warn('⚠️ DISCORD_TOKEN 미설정 (.env 확인)');
 
-// 미도리 서버 안내
+// 인텐트
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildVoiceStates,
+    GatewayIntentBits.GuildMembers,
+  ]
+});
+
+// 미도리 서버 안내 설정
 const STEAM_HOST = (process.env.STEAM_HOST?? '').trim(); // x.x.x.x 
 const STEAM_HOST2 = (process.env.STEAM_HOST2?? '').trim(); // DNS
 const STEAM_PASSWORD = (process.env.STEAM_PASSWORD?? '').trim();
@@ -22,17 +32,42 @@ const connect_page = 'https://midori.wiki/counterstrike2/connect';
 const THUMBNAIL_URL = 'https://midori.wiki/wp-content/uploads/2025/03/midori512x512.png';
 const LANDING_RAW = (process.env.LANDING_URL?? '').trim();
 
-// 오윈 크롤러
-const DOTNET = (process.env.DOTNET_EXE || 'dotnet').trim();
-const DEBUG_RANK = /^(1|true)$/i.test(process.env.DEBUG_RANK || '');
-const FETCHRANK_EXE = (process.env.FETCHRANK_EXE || '').trim();
-const FETCHRANK_DIR = (process.env.FETCHRANK_DIR || '').trim();
-const HTML_CAP = 2_000_000;
-const RANK_TIMEOUT_MS = parseInt(process.env.RANK_TIMEOUT_MS || '60000', 10);
-const RANK_HTTP_MS = 5000;
-const RANK_DOTNET_MS = 25000;
+// 보이스 집계 설정
+const DATA_DIR = path.resolve(__dirname, 'data');
+fs.mkdirSync(DATA_DIR, { recursive: true });
+const EXCLUDED_CHANNEL_IDS = new Set([ // 제외할 채널 ID
+  // '123456789012345678',
+]);
+const EXCLUDED_ROLE_IDS = new Set([ // 제외할 유저 ID
+  // '987654321098765432',
+]);
+const MIN_CONN_PEOPLE = 2; // 활동 인정 최소 인원
+const TZ = 'Asia/Seoul';
+const dayKey = (d = new Date()) =>
+  new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
 
-// usermap.json
+// voicemap.json 불러오기
+fs.mkdirSync(DATA_DIR, { recursive: true });
+const GCFG_FILE = path.join(DATA_DIR, 'voicemap.json');
+let ENABLED_GUILDS = new Set();
+try {
+  if (fs.existsSync(GCFG_FILE)) {
+    ENABLED_GUILDS = new Set(JSON.parse(fs.readFileSync(GCFG_FILE, 'utf8')));
+    console.log('✅ voicemap.json 인식 완료');
+  }
+} catch (e) {
+  console.error('⚠️ voicemap.json 로드 에러:', e);
+}
+function saveGuildConfig() {
+  try {
+    fs.writeFileSync(GCFG_FILE, JSON.stringify([...ENABLED_GUILDS], null, 2), 'utf8');
+  } catch (e) {
+    console.error('⚠️ voicemap.json 세이브 에러:', e);
+  }
+}
+const isGuildEnabled = (gid) => ENABLED_GUILDS.has(gid);
+
+// usermap.json 불러오기
 const mapPath = process.env.USERMAP_PATH || path.join(__dirname, 'usermap.json');
 let userMap = {};
 try {
@@ -41,18 +76,6 @@ try {
 } catch {
   console.warn('⚠️ usermap.json 인식 불가, 빈 매핑으로 시작');
 }
-
-// 디버그
-function trunc(s, n = 1200) {
-  s = String(s ?? '');
-  return s.length > n ? s.slice(0, n) + '…(trunc)' : s;
-}
-function dlog(...args) { if (DEBUG_RANK) console.log('[RANK]', ...args); }
-
-// 인텐트
-const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
-});
 
 // 콘솔 온라인 응답, 디스코드 "플레이 중" 설정
 client.once(Events.ClientReady, readyClient => {
@@ -63,139 +86,201 @@ client.once(Events.ClientReady, readyClient => {
     });
 });
 
-// 오윈
-async function fetchRank(playerId) {
-  const fast = await fetchRankViaHttp(playerId, RANK_HTTP_MS);
-  if (fast?.Rank) return fast;
-  return fetchRankViaDotnet(playerId, RANK_DOTNET_MS);
+//보이스 집계
+const connAgg  = Object.create(null);
+const connLive = new Map();
+function ensureConn(gid, uid, date = dayKey()) {
+  connAgg[date] ??= {}; connAgg[date][gid] ??= {};
+  connAgg[date][gid][uid] ??= { connectedMs: 0, sessions: 0 };
+  return connAgg[date][gid][uid];
 }
 
-function fetchRankViaDotnet(playerId, timeoutMs = RANK_TIMEOUT_MS) {
-  return new Promise((resolve) => {
-    const finish = (tag, err, stdout = '', stderr = '') => {
-      const out = String(stdout);
-      let data = null;
+function msToHMS(ms=0) {
+  const s = Math.max(0, Math.round(ms/1000));
+  const h = Math.floor(s/3600), m = Math.floor((s%3600)/60), ss = s%60;
+  return `${h}:${String(m).padStart(2,'0')}:${String(ss).padStart(2,'0')}`;
+}
 
-      const m = out.match(/\[DATA\]\s*({[\s\S]*?})\s*$/m);
-      if (m) {
-        try {
-          data = JSON.parse(m[1]);
-        } catch {
-          const last = m[1].lastIndexOf('}');
-          if (last >= 0) {
-            try { data = JSON.parse(m[1].slice(0, last + 1)); } catch {}
-          }
-        }
+function flushConnGuild(guild, date = dayKey()) {
+  const now = Date.now();
+  const dateStartMs = new Date(`${date}T00:00:00+09:00`).getTime();
+  for (const [key, s] of connLive) {
+    const [gid, uid] = key.split(':');
+    if (gid !== guild.id) continue;
+    const from = Math.max(s.startMs, dateStartMs);
+    const add  = now - from;
+    if (add > 0) ensureConn(guild.id, uid, date).connectedMs += add;
+    s.startMs = now;
+  }
+}
+function hasExcludedRole(member) {
+  if (!EXCLUDED_ROLE_IDS?.size) return false;
+  for (const rid of EXCLUDED_ROLE_IDS) if (member.roles?.cache?.has?.(rid)) return true;
+  return false;
+}
+function isChannelAllowed(channel) {
+  return channel && channel.type === ChannelType.GuildVoice && !EXCLUDED_CHANNEL_IDS?.has?.(channel.id);
+}
+function isMemberAllowedInChannel(member, channel) {
+  if (!member || member.user?.bot) return false;
+  if (!isChannelAllowed(channel)) return false;
+  if (hasExcludedRole(member)) return false;
+  return true;
+}
+function recalcPresenceChannel(channel) {
+  if (!isChannelAllowed(channel)) return;
+  const gid = channel.guild.id;
+  if (typeof isGuildEnabled === 'function' && !isGuildEnabled(gid)) return;
+
+  const now     = Date.now();
+  const members = [...channel.members.values()];
+  const allowed = members.filter(m => isMemberAllowedInChannel(m, channel));
+  const enough  = allowed.length >= MIN_CONN_PEOPLE;
+
+  for (const m of members) {
+    const key  = `${gid}:${m.id}`;
+    const live = connLive.get(key);
+    if (live && live.channelId === channel.id) {
+      const stillAllowed = allowed.some(x => x.id === m.id);
+      if (!enough || !stillAllowed) {
+        ensureConn(gid, m.id).connectedMs += (now - live.startMs);
+        connLive.delete(key);
       }
-
-      if (!data) {
-        const line = out.split(/\r?\n/).find(l => l.startsWith('[DATA] '));
-        if (line) {
-          try { data = JSON.parse(line.slice(7)); } catch {}
-        }
-      }
-
-      const info = {
-        source: tag, ok: !!data, data,
-        error: err?.message, code: err?.code, signal: err?.signal,
-        stdout: trunc(out), stderr: trunc(stderr),
-      };
-      dlog(tag, info);
-      resolve(info);
-    };
-
-    if (FETCHRANK_EXE && FETCHRANK_EXE.length) {
-      return execFile(
-        FETCHRANK_EXE,
-        [playerId],
-        { windowsHide: true, timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 },
-        (err, stdout, stderr) => finish('exe', err, stdout, stderr)
-      );
     }
-    if (!FETCHRANK_DIR) return resolve({ source: 'exe/run', ok: false, data: null, error: 'no path' });
+  }
 
-    return execFile(
-      DOTNET,
-      ['run', '--', playerId],
-      { cwd: FETCHRANK_DIR, windowsHide: true, timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 },
-      (err, stdout, stderr) => finish('run', err, stdout, stderr)
-    );
-  });
-}
-
-function normalizeUrlStrict(raw) {
-  if (!raw) return '';
-  let s = String(raw).trim();
-  if (s.startsWith('//')) s = 'https:' + s;
-  if (s.startsWith('/'))  s = 'https://arena.5eplay.com' + s;
-  if (!/^https?:/i.test(s)) s = 'https:' + s;
-
-  try {
-    const u = new URL(s);
-    if (!/^https?$/i.test(u.protocol.replace(':',''))) return '';
-    const host = u.hostname.replace(/\.$/, '').toLowerCase();
-    const root = '5eplay.com';
-    const allowed = host === root || host.endsWith('.' + root);
-    if (!allowed) return '';
-    u.search = '';
-    u.hash   = '';
-    u.protocol = 'https:';
-    return u.toString();
-  } catch { return ''; }
-}
-
-async function fetchRankViaHttp(playerId, timeoutMs = RANK_TIMEOUT_MS) {
-  const url = `https://arena.5eplay.com/data/player/${encodeURIComponent(playerId)}`;
-  const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(url, {
-      signal: controller.signal,
-      headers: {
-        'user-agent': `MidoriBot/${version}`,
-        'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'accept-language': 'en-US,en;q=0.9'
+  if (enough) {
+    for (const m of allowed) {
+      const key = `${gid}:${m.id}`;
+      if (!connLive.has(key)) {
+        connLive.set(key, { channelId: channel.id, startMs: now });
+        ensureConn(gid, m.id).sessions += 1;
       }
-    });
+    }
+  }
+}
 
-    const len = Number(res.headers.get('content-length') || 0);
-    if (len && len > HTML_CAP) return null;
-    const html = await res.text();
-    if (html.length > HTML_CAP) return null;
+client.on(Events.VoiceStateUpdate, (oldState, newState) => {
+  try {
+    const guild = newState.guild ?? oldState.guild;
+    if (!guild || (typeof isGuildEnabled === 'function' && !isGuildEnabled(guild.id))) return;
 
-    // 이미지 src 추출
-    let m = html.match(/class=["']lego_level2025_img["'][^>]*\bsrc=["']([^"']+)["']/i);
-    if (!m) m = html.match(/https?:\/\/[^\s"'<>]*\/level_2025\/[A-Za-z0-9_]+\.(?:png|gif)/i);
-    if (!m) return null;
-
-    const raw = m[1] || m[0];
-    const src = normalizeUrlStrict(raw);
-    if (!src) return null;
-
-    const file = src.split('/').pop() || '';
-    const rank = extractRankFromFile(file);
-    return { Rank: rank, FileName: file, Src: src };
+    if (oldState?.channel) recalcPresenceChannel(oldState.channel);
+    if (newState?.channel) recalcPresenceChannel(newState.channel);
   } catch (e) {
-    console.error('http fallback error:', e?.name === 'AbortError' ? 'timeout' : e?.message || e);
-    return null;
-  } finally { clearTimeout(t); }
-}
+    console.error('[voice] VSU (presence) error:', e);
+  }
+});
 
-function extractRankFromFile(file) {
-  const stem = file.replace(/\.[^.]+$/, '');
-  if (/^ques/i.test(stem)) return 'Unrank';
-  const m = stem.match(/^([A-Da-d])(2)?(?:[_-]|$)/);
-  if (!m) return null;
-  const letter = m[1].toUpperCase();
-  return m[2] ? `${letter}+` : letter;
-}
+// 미도리봇 보이스 토글
+client.on(Events.MessageCreate, async (message) => {
+  if (message.author.bot || !message.inGuild?.() || !message.guild) return;
+  const m = message.content.trim();
+  const isAdmin =
+    message.member?.permissions.has(PermissionFlagsBits.Administrator) ||
+    message.member?.permissions.has(PermissionFlagsBits.ManageGuild);
 
-async function getRankWithDebug(playerId) {
-  const first = await fetchRankViaDotnet(playerId);
-  if (first.ok) return first;
-  const second = await fetchRankViaHttp(playerId);
-  return second.ok ? second : { source: `${first.source}+http`, ok: false, data: null, error: first.error || second.error };
-}
+  if (m === '미도리 보이스 ON') {
+    if (!isAdmin) return void message.reply('🔒 관리자만 설정할 수 있어요.');
+    ENABLED_GUILDS.add(message.guild.id);
+    saveGuildConfig();
+    return void message.reply('✅ 이 서버에서 **보이스 활동을 집계**합니다');
+  }
+
+  if (m === '미도리 보이스 OFF') {
+    if (!isAdmin) return void message.reply('🔒 관리자만 설정할 수 있어요.');
+    const date = dayKey();
+
+    flushConnGuild(message.guild, date);
+
+    // CSV 생성
+    const gStats = connAgg?.[date]?.[message.guild.id];
+    let fpath = null;
+    if (gStats && Object.keys(gStats).length) {
+      const header = ['date','guildId','userId','displayName','sessions_conn','connected_ms','connected_hms'];
+      const rows = [header.join(',')];
+
+      for (const [uid, st] of Object.entries(gStats)) {
+      const gidCell = `="${message.guild.id}"`;
+      const uidCell = `="${uid}"`;
+      let name = `user_${uid}`;
+      try { const mem = await message.guild.members.fetch(uid); if (mem?.displayName) name = mem.displayName; } catch {}
+      name = name.replaceAll(',', ' ');
+      rows.push([date, gidCell, uidCell, name, (st.sessions|0), (st.connectedMs|0), msToHMS(st.connectedMs|0)].join(','));
+      }
+      const fname = `voice_connected_${date}_${message.guild.id}.csv`;
+      fpath = path.join(DATA_DIR, fname);
+      fs.writeFileSync(fpath, rows.join('\n'), 'utf8');
+    }
+
+    ENABLED_GUILDS.delete(message.guild.id); saveGuildConfig?.();
+    for (const [key] of [...connLive]) { const [gid] = key.split(':'); if (gid === message.guild.id) connLive.delete(key); }
+
+    if (fpath) {
+      return message.reply({
+        content: `🛑 **보이스 활동 집계를 정지**합니다 — 📁 **CSV 저장** 완료 (\`${path.basename(fpath)}\`)`,
+        files: [fpath],
+        allowedMentions: { repliedUser: false },
+      });
+    } else {
+      return message.reply({
+        content: `🛑 **보이스 활동 집계를 정지**합니다 — **${date}** 저장할 데이터가 **없습니다.**`,
+        allowedMentions: { repliedUser: false },
+      });
+    }
+  }
+  if (m === '미도리 보이스 상태') {
+    return void message.reply(
+      isGuildEnabled(message.guild.id)
+        ? '🟢 이 서버는 **집계 중**입니다.'
+        : '⚪ 이 서버는 **집계 꺼짐**입니다.'
+    );
+  }
+});
+
+// 보이스 디버그
+client.on(Events.MessageCreate, async (message) => {
+  if (message.author.bot || !message.inGuild?.()) return;
+  if (message.content !== '미도리 보이스 디버그') return;
+
+  const date = dayKey();
+  if (typeof flushConnGuild === 'function') {
+    try { flushConnGuild(message.guild, date); } catch {}
+  }
+  const stats = connAgg?.[date]?.[message.guild.id] || {};
+  const entries = Object.entries(stats)
+    .map(([uid, st]) => ({
+      uid,
+      sessions: Number(st?.sessions) || 0,
+      ms: Number(st?.connectedMs) || 0,
+    }))
+    .sort((a, b) => b.ms - a.ms);
+  const top3 = entries.slice(0, 3);
+  const msToHMS = (ms = 0) => {
+    const n = Math.max(0, Math.floor(Number(ms) || 0));
+    const s = Math.floor(n / 1000);
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const ss = s % 60;
+    return `${h}:${String(m).padStart(2,'0')}:${String(ss).padStart(2,'0')}`;
+  };
+
+  const lines = await Promise.all(top3.map(async (r, i) => {
+    let name = `user_${r.uid}`;
+    try {
+      const mem = await message.guild.members.fetch(r.uid);
+      if (mem?.displayName) name = mem.displayName;
+    } catch {}
+    return `${i + 1}. ${name} — ${msToHMS(r.ms)} (${r.sessions}회 세션)`;
+  }));
+
+  await message.reply([
+    `enabled=${ENABLED_GUILDS.has(message.guild.id)}`,
+    `date=${date}`,
+    `aggregated_users=${entries.length}`,
+    ...(lines.length ? lines : ['(데이터 없음)']),
+  ].join('\n'));
+});
 
 // 미도리 서버 안내
 client.on(Events.MessageCreate, async (message) => {
@@ -232,10 +317,11 @@ client.on(Events.MessageCreate, async (message) => {
       .setFooter({ text: '문제 발생 시 관리자에게 문의하세요!' })
       .setTimestamp();
 
+  // 썸네일 가드
   if (THUMBNAIL_URL) embed.setThumbnail(THUMBNAIL_URL);
   if (typeof THUMBNAIL_URL !== 'undefined' && THUMBNAIL_URL) {
   embed.setThumbnail(THUMBNAIL_URL);
-  } // 썸네일 가드
+  }
 
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
@@ -286,21 +372,21 @@ client.on(Events.InteractionCreate, async (interaction) => {
   }
 
   else if (commandName === '내정보') {
-      const u = interaction.options.getUser('내정보') || interaction.user;
-      const jsonKey = `"${String(u.id)}"`;
-      return void interaction.reply({
-        content: `내 태그: ${u.tag ?? u.username}\nID: ${u.id}\n확인된 JSON 키: ${jsonKey}`,
-        ephemeral: true
-      });
-    }
+    const u = interaction.options.getUser('내정보') || interaction.user;
+    const jsonKey = `"${String(u.id)}"`;
+    return void interaction.reply({
+      content: `내 태그: ${u.tag ?? u.username}\nID: ${u.id}\n확인된 JSON 키: ${jsonKey}`,
+      ephemeral: true
+    });
+  }
 
   else if (commandName === '오윈') {
-  const u = interaction.options.getUser('유저', true);
-  const mappedId = userMap[String(u.id)]
+    const u = interaction.options.getUser('유저', true);
+    const mappedId = userMap[String(u.id)]
   || userMap[u.username]
 
   if (!mappedId)  {
-      return void interaction.reply(`죄송합니다. <@${u.id}> (${u.username}) 님은 5E에 등록되어 있지 않아요 😢`);
+    return void interaction.reply(`죄송합니다. <@${u.id}> (${u.username}) 님은 5E에 등록되어 있지 않아요 😢`);
   }
 
   const profileUrl = `https://arena.5eplay.com/data/player/${mappedId}`;
