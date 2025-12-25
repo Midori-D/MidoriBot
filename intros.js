@@ -36,7 +36,7 @@ async function getIntro(userId) {
   return db[String(userId)]?.text ?? null;
 }
 
-async function setIntro(userId, rawText, maxLen = 128) {
+async function setIntro(userId, rawText, maxLen = 256) {
   const text = normalize(rawText);
   if (!text) return { ok: false, reason: 'empty' };
   if (text.length > maxLen) return { ok: false, reason: 'too_long' }; // Length limit
