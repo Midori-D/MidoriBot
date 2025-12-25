@@ -24,7 +24,7 @@ const commands = [
     .setName('소개설정').setDescription('내 소개글을 설정합니다').setDMPermission(false)
     .addStringOption(o => o
       .setName('내용').setDescription('소개글 내용, <br> 또는 \\n 으로 줄바꿈').setRequired(true)
-      .setMaxLength(128)),
+      .setMaxLength(256)),
   new SlashCommandBuilder()
     .setName('오윈').setDescription('5E 랭크 확인합니다(고장)').setDMPermission(false)
     .addUserOption(o => o.setName('유저').setDescription('대상 유저').setRequired(true)),
