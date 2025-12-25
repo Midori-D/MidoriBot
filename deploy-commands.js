@@ -13,12 +13,22 @@ if (scope === 'guild' && !guildId) { console.error('❌ DISCORD_GUILD_ID 누락'
 console.log(`deploy scope = ${scope}, client=${clientId}, guild=${guildId || '(none)'}`);
 
 const commands = [
-  new SlashCommandBuilder().setName('핑').setDescription('핑 확인').setDMPermission(false),
-  new SlashCommandBuilder().setName('서버').setDescription('서버 정보 확인').setDMPermission(false),
-  new SlashCommandBuilder().setName('내정보').setDescription('내 정보 확인').setDMPermission(false),
+  new SlashCommandBuilder().setName('내정보').setDescription('내 정보를 확인합니다').setDMPermission(false),
+  new SlashCommandBuilder().setName('서버').setDescription('서버 정보를 확인합니다').setDMPermission(false),
   new SlashCommandBuilder()
-    .setName('오윈').setDescription('5E 랭크 확인').setDMPermission(false)
+    .setName('소개').setDescription('유저 소개글을 보여줍니다').setDMPermission(false)
+    .addUserOption(o => o.setName('유저').setDescription('대상 유저 (비우면 본인)').setRequired(false)),
+  new SlashCommandBuilder()
+    .setName('소개삭제').setDescription('내 소개글을 삭제합니다').setDMPermission(false),
+  new SlashCommandBuilder()
+    .setName('소개설정').setDescription('내 소개글을 설정합니다').setDMPermission(false)
+    .addStringOption(o => o
+      .setName('내용').setDescription('소개글 내용, <br> 또는 \\n 으로 줄바꿈').setRequired(true)
+      .setMaxLength(128)),
+  new SlashCommandBuilder()
+    .setName('오윈').setDescription('5E 랭크 확인합니다(고장)').setDMPermission(false)
     .addUserOption(o => o.setName('유저').setDescription('대상 유저').setRequired(true)),
+  new SlashCommandBuilder().setName('핑').setDescription('핑 확인').setDMPermission(false),
 ].map(c => c.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(token);
