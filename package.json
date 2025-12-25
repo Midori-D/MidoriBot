@@ -1,6 +1,6 @@
 {
   "name": "midoribot",
-  "version": "1.2",
+  "version": "1.6",
   "description": "discord bot",
   "main": "midoribot.js",
   "scripts": {
@@ -12,10 +12,10 @@
   "author": "midori",
   "license": "MIT",
   "dependencies": {
-    "@discordjs/builders": "^1.11.2",
-    "@discordjs/rest": "^2.5.1",
-    "discord-api-types": "^0.38.18",
-    "discord.js": "^14.21.0",
-    "dotenv": "^17.2.1"
+    "@discordjs/builders": "^1.13.1",
+    "@discordjs/rest": "^2.6.0",
+    "discord-api-types": "^0.38.37",
+    "discord.js": "^14.25.1",
+    "dotenv": "^17.2.3"
   }
 }
