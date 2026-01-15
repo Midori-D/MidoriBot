@@ -35,7 +35,7 @@ client.once(Events.ClientReady, readyClient => {
     });
 });
 
-client.login(process.env.BOT_TOKEN);
+client.login(process.env.DISCORD_TOKEN);
 const token = (process.env.DISCORD_TOKEN?? '').trim();
 if (!token) console.warn('⚠️ DISCORD_TOKEN 미설정 (.env 확인)');
 
@@ -87,9 +87,6 @@ client.on(Events.MessageCreate, async (message) => {
 
   // Thumbnail Guard
   if (THUMBNAIL_URL) embed.setThumbnail(THUMBNAIL_URL);
-  if (typeof THUMBNAIL_URL !== 'undefined' && THUMBNAIL_URL) {
-  embed.setThumbnail(THUMBNAIL_URL);
-  }
 
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
@@ -187,6 +184,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         { name: 'REST', value: `\`${restMs}ms\``, inline: true },
         { name: 'Gateway', value: `\`${gwMs}ms\``, inline: true },
       )
+      .setFooter({ text: `MidoriBot v${version}` })
       .setTimestamp();
 
     await interaction.editReply({ content: sent.content, embeds: [embed] });
@@ -194,15 +192,23 @@ client.on(Events.InteractionCreate, async (interaction) => {
 });
 
 // Bot Offline
-process.on('SIGINT', () => {
-  console.log('👋 미도리봇, 종료');
-  client.destroy();
-  process.exit();
-});
+async function shutdown(signal) {
+  console.log(`\n👋 ${signal} 신호를 감지했습니다. 미도리봇을 안전하게 종료합니다...`);
+  
+  try {
+    await client.destroy(); 
+    console.log('👋 디스코드 연결 해제 완료');
+  } catch (err) {
+    console.error('⚠️ 종료 중 에러 발생:', err);
+  } finally {
+    console.log('👋 미도리봇, 종료');
+    process.exit(0);
+  }
+}
 
-client.on('error', (err) => console.error('client error:', err));
-process.on('unhandledRejection', (err) => console.error('unhandledRejection:', err));
+client.on('error', (err) => console.error('❌ Discord Client Error:', err));
+process.on('unhandledRejection', (err) => {
+  console.error('❌ Unhandled Rejection (치명적이지 않은 에러):', err);
+});
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
-
-client.login(process.env.DISCORD_TOKEN);
